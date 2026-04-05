@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
       oauthTokenSecret
     );
 
-    saveAccount("x", { accessToken, accessSecret, screenName });
+    await saveAccount("x", { accessToken, accessSecret, screenName });
     cookieStore.delete("x_oauth_secret");
 
     return NextResponse.redirect(new URL("/settings?connected=x", req.url));

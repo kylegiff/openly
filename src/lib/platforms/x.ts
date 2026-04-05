@@ -2,7 +2,7 @@ import { TwitterApi } from "twitter-api-v2";
 import { getAccount } from "../db";
 
 export async function postToX(text: string) {
-  const creds = getAccount("x");
+  const creds = await getAccount("x");
   if (!creds) throw new Error("X account not connected. Go to /settings to connect.");
 
   const client = new TwitterApi({

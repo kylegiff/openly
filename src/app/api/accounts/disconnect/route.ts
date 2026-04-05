@@ -8,6 +8,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid platform." }, { status: 400 });
   }
 
-  deleteAccount(platform);
+  await deleteAccount(platform);
   return NextResponse.json({ success: true });
 }

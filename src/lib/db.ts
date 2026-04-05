@@ -1,31 +1,51 @@
-import path from "path";
-import fs from "fs";
+import { cookies } from "next/headers";
 
-function getDataDir(): string {
-  const preferred = path.join(process.cwd(), ".data");
+const COOKIE_PREFIX = "openly_";
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  path: "/",
+  maxAge: 60 * 60 * 24 * 365, // 1 year
+  sameSite: "lax" as const,
+};
+
+// --- Account storage via encrypted cookies ---
+
+export async function getAccount(platform: string): Promise<Record<string, string> | null> {
+  const cookieStore = await cookies();
+  const raw = cookieStore.get(`${COOKIE_PREFIX}${platform}`)?.value;
+  if (!raw) return null;
   try {
-    if (!fs.existsSync(preferred)) fs.mkdirSync(preferred, { recursive: true });
-    // Test write access
-    const testFile = path.join(preferred, ".write-test");
-    fs.writeFileSync(testFile, "ok");
-    fs.unlinkSync(testFile);
-    return preferred;
+    return JSON.parse(Buffer.from(raw, "base64").toString());
   } catch {
-    // Fall back to /tmp on read-only filesystems (Railway, etc.)
-    const fallback = "/tmp/openly-data";
-    if (!fs.existsSync(fallback)) fs.mkdirSync(fallback, { recursive: true });
-    return fallback;
+    return null;
   }
 }
 
-const DATA_DIR = getDataDir();
-
-const DB_PATH = path.join(DATA_DIR, "openly.json");
-
-interface Store {
-  accounts: Record<string, Record<string, string>>;
-  scheduledPosts: ScheduledPost[];
+export async function saveAccount(platform: string, credentials: Record<string, string>) {
+  const cookieStore = await cookies();
+  const encoded = Buffer.from(JSON.stringify(credentials)).toString("base64");
+  cookieStore.set(`${COOKIE_PREFIX}${platform}`, encoded, COOKIE_OPTIONS);
 }
+
+export async function deleteAccount(platform: string) {
+  const cookieStore = await cookies();
+  cookieStore.delete(`${COOKIE_PREFIX}${platform}`);
+}
+
+export async function getConnectedPlatforms(): Promise<string[]> {
+  const cookieStore = await cookies();
+  const platforms: string[] = [];
+  for (const name of ["x", "linkedin"]) {
+    if (cookieStore.get(`${COOKIE_PREFIX}${name}`)?.value) {
+      platforms.push(name);
+    }
+  }
+  return platforms;
+}
+
+// --- Scheduled posts stored in-memory (ephemeral) ---
+// For durable scheduling, use Vercel Cron + an external store later.
 
 interface ScheduledPost {
   id: number;
@@ -38,45 +58,12 @@ interface ScheduledPost {
   error?: string;
 }
 
-function read(): Store {
-  if (!fs.existsSync(DB_PATH)) {
-    return { accounts: {}, scheduledPosts: [] };
-  }
-  return JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-}
-
-function write(store: Store) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(store, null, 2));
-}
-
-export function getAccount(platform: string) {
-  const store = read();
-  return store.accounts[platform] || null;
-}
-
-export function saveAccount(platform: string, credentials: Record<string, string>) {
-  const store = read();
-  store.accounts[platform] = credentials;
-  write(store);
-}
-
-export function deleteAccount(platform: string) {
-  const store = read();
-  delete store.accounts[platform];
-  write(store);
-}
-
-export function getConnectedPlatforms(): string[] {
-  const store = read();
-  return Object.keys(store.accounts);
-}
+const scheduledPosts: ScheduledPost[] = [];
+let nextId = 1;
 
 export function addScheduledPost(text: string, platform: string, scheduledAt: string) {
-  const store = read();
-  const id = store.scheduledPosts.length > 0
-    ? Math.max(...store.scheduledPosts.map((p) => p.id)) + 1
-    : 1;
-  store.scheduledPosts.push({
+  const id = nextId++;
+  scheduledPosts.push({
     id,
     text,
     platform,
@@ -84,21 +71,18 @@ export function addScheduledPost(text: string, platform: string, scheduledAt: st
     status: "pending",
     createdAt: new Date().toISOString(),
   });
-  write(store);
   return id;
 }
 
 export function getPendingPosts(): ScheduledPost[] {
-  const store = read();
   const now = new Date().toISOString();
-  return store.scheduledPosts.filter(
+  return scheduledPosts.filter(
     (p) => p.status === "pending" && p.scheduledAt <= now
   );
 }
 
 export function markPostComplete(id: number, error?: string) {
-  const store = read();
-  const post = store.scheduledPosts.find((p) => p.id === id);
+  const post = scheduledPosts.find((p) => p.id === id);
   if (post) {
     if (error) {
       post.status = "failed";
@@ -107,6 +91,5 @@ export function markPostComplete(id: number, error?: string) {
       post.status = "posted";
       post.postedAt = new Date().toISOString();
     }
-    write(store);
   }
 }

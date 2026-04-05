@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     }
 
     const { accessToken, expiresIn } = await handleLinkedInCallback(code);
-    saveAccount("linkedin", { accessToken, expiresIn: String(expiresIn) });
+    await saveAccount("linkedin", { accessToken, expiresIn: String(expiresIn) });
 
     return NextResponse.redirect(new URL("/settings?connected=linkedin", req.url));
   } catch (err: unknown) {

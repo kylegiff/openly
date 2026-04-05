@@ -3,7 +3,7 @@ import { getAccount } from "../db";
 const LINKEDIN_API = "https://api.linkedin.com/v2";
 
 export async function postToLinkedIn(text: string) {
-  const creds = getAccount("linkedin");
+  const creds = await getAccount("linkedin");
   if (!creds) throw new Error("LinkedIn account not connected. Go to /settings to connect.");
 
   // Get user's person URN
