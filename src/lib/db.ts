@@ -1,8 +1,24 @@
 import path from "path";
 import fs from "fs";
 
-const DATA_DIR = path.join(process.cwd(), ".data");
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+function getDataDir(): string {
+  const preferred = path.join(process.cwd(), ".data");
+  try {
+    if (!fs.existsSync(preferred)) fs.mkdirSync(preferred, { recursive: true });
+    // Test write access
+    const testFile = path.join(preferred, ".write-test");
+    fs.writeFileSync(testFile, "ok");
+    fs.unlinkSync(testFile);
+    return preferred;
+  } catch {
+    // Fall back to /tmp on read-only filesystems (Railway, etc.)
+    const fallback = "/tmp/openly-data";
+    if (!fs.existsSync(fallback)) fs.mkdirSync(fallback, { recursive: true });
+    return fallback;
+  }
+}
+
+const DATA_DIR = getDataDir();
 
 const DB_PATH = path.join(DATA_DIR, "openly.json");
 
