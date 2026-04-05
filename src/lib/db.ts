@@ -1,81 +1,96 @@
-import { Database } from "bun:sqlite";
 import path from "path";
 import fs from "fs";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(path.join(DATA_DIR, "openly.db"));
+const DB_PATH = path.join(DATA_DIR, "openly.json");
 
-db.exec("PRAGMA journal_mode = WAL");
+interface Store {
+  accounts: Record<string, Record<string, string>>;
+  scheduledPosts: ScheduledPost[];
+}
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS accounts (
-    platform TEXT PRIMARY KEY,
-    credentials TEXT NOT NULL,
-    connected_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+interface ScheduledPost {
+  id: number;
+  text: string;
+  platform: string;
+  scheduledAt: string;
+  status: "pending" | "posted" | "failed";
+  createdAt: string;
+  postedAt?: string;
+  error?: string;
+}
 
-  CREATE TABLE IF NOT EXISTS scheduled_posts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    text TEXT NOT NULL,
-    platform TEXT NOT NULL,
-    scheduled_at TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    posted_at TEXT,
-    error TEXT
-  );
-`);
+function read(): Store {
+  if (!fs.existsSync(DB_PATH)) {
+    return { accounts: {}, scheduledPosts: [] };
+  }
+  return JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
+}
 
-export default db;
+function write(store: Store) {
+  fs.writeFileSync(DB_PATH, JSON.stringify(store, null, 2));
+}
 
 export function getAccount(platform: string) {
-  const row = db
-    .prepare("SELECT credentials FROM accounts WHERE platform = ?")
-    .get(platform) as { credentials: string } | undefined;
-  return row ? JSON.parse(row.credentials) : null;
+  const store = read();
+  return store.accounts[platform] || null;
 }
 
 export function saveAccount(platform: string, credentials: Record<string, string>) {
-  db.prepare(
-    "INSERT OR REPLACE INTO accounts (platform, credentials, connected_at) VALUES (?, ?, datetime('now'))"
-  ).run(platform, JSON.stringify(credentials));
+  const store = read();
+  store.accounts[platform] = credentials;
+  write(store);
 }
 
 export function deleteAccount(platform: string) {
-  db.prepare("DELETE FROM accounts WHERE platform = ?").run(platform);
+  const store = read();
+  delete store.accounts[platform];
+  write(store);
 }
 
 export function getConnectedPlatforms(): string[] {
-  const rows = db.prepare("SELECT platform FROM accounts").all() as { platform: string }[];
-  return rows.map((r) => r.platform);
+  const store = read();
+  return Object.keys(store.accounts);
 }
 
 export function addScheduledPost(text: string, platform: string, scheduledAt: string) {
-  return db
-    .prepare(
-      "INSERT INTO scheduled_posts (text, platform, scheduled_at) VALUES (?, ?, ?)"
-    )
-    .run(text, platform, scheduledAt);
+  const store = read();
+  const id = store.scheduledPosts.length > 0
+    ? Math.max(...store.scheduledPosts.map((p) => p.id)) + 1
+    : 1;
+  store.scheduledPosts.push({
+    id,
+    text,
+    platform,
+    scheduledAt,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  });
+  write(store);
+  return id;
 }
 
-export function getPendingPosts() {
-  return db
-    .prepare(
-      "SELECT * FROM scheduled_posts WHERE status = 'pending' AND scheduled_at <= datetime('now')"
-    )
-    .all();
+export function getPendingPosts(): ScheduledPost[] {
+  const store = read();
+  const now = new Date().toISOString();
+  return store.scheduledPosts.filter(
+    (p) => p.status === "pending" && p.scheduledAt <= now
+  );
 }
 
 export function markPostComplete(id: number, error?: string) {
-  if (error) {
-    db.prepare(
-      "UPDATE scheduled_posts SET status = 'failed', error = ? WHERE id = ?"
-    ).run(error, id);
-  } else {
-    db.prepare(
-      "UPDATE scheduled_posts SET status = 'posted', posted_at = datetime('now') WHERE id = ?"
-    ).run(id);
+  const store = read();
+  const post = store.scheduledPosts.find((p) => p.id === id);
+  if (post) {
+    if (error) {
+      post.status = "failed";
+      post.error = error;
+    } else {
+      post.status = "posted";
+      post.postedAt = new Date().toISOString();
+    }
+    write(store);
   }
 }
